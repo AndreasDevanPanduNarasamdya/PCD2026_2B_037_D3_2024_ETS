@@ -8,6 +8,7 @@ import '../auth/user_model.dart';
 import 'log_editor_view.dart';
 import '../auth/login_view.dart';
 import '../vision/vision_view.dart';
+import 'package:camera/camera.dart'; // Make sure this is at the top
 
 class LogView extends StatefulWidget {
   final UserModel currentUser;
@@ -300,7 +301,20 @@ class _LogViewState extends State<LogView> {
           // Tombol buka kamera standalone (PCD Scanner)
           FloatingActionButton(
             heroTag: 'pcd_scanner_fab',
-            onPressed: () {
+            onPressed: () async {
+              // 1. Get the camera
+              final cameras = await availableCameras();
+              if (cameras.isEmpty) return;
+
+              // 2. Initialize the controller
+              final controller = CameraController(
+                cameras.first,
+                ResolutionPreset.medium,
+              );
+              await controller.initialize();
+
+              // 3. Navigate (Remove 'const' because the controller is dynamic)
+              if (!context.mounted) return;
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const VisionView()),

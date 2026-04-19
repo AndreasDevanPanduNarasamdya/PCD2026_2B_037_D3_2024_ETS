@@ -12,6 +12,18 @@ class ImageProcessingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // 1. Smoothening (Gaussian Blur)
+  // Smoothening (Gaussian Blur)
+  void applyBlur(img.Image image) {
+    img.gaussianBlur(image, radius: 5);
+  }
+
+  // Median Filter
+  void applyMedianFilter(img.Image image) {
+    // Try this exact line
+    img.gaussianBlur(image, radius: 5);
+  }
+
   /// 1. GRAYSCALE (Luminance Conversion)
   Future<void> applyGrayscale() async {
     await _processImage((originalImage) {

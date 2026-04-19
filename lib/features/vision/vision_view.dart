@@ -201,14 +201,26 @@ class _VisionViewState extends State<VisionView> {
   }
 
   Widget _buildVisionStack() {
+    final cameraController = _visionController.controller!;
     return Stack(
       fit: StackFit.expand,
       children: [
         // Layer 1: Kamera
         Center(
           child: AspectRatio(
-            aspectRatio: _visionController.controller!.value.aspectRatio,
-            child: CameraPreview(_visionController.controller!),
+            aspectRatio: cameraController.value.aspectRatio,
+            child: SizedBox(
+              width: double.infinity,
+              height: double.infinity,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: cameraController.value.previewSize!.width,
+                  height: cameraController.value.previewSize!.height,
+                  child: CameraPreview(cameraController),
+                ),
+              ),
+            ),
           ),
         ),
 

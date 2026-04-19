@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'models/log_model.dart';
 import '../auth/user_model.dart';
 import '../vision/vision_view.dart';
-import '..//vision/image_processing_view.dart';
+import '../vision/image_processing_view.dart';
 
 class LogEditorView extends StatefulWidget {
   final UserModel currentUser;
@@ -42,9 +42,16 @@ class _LogEditorViewState extends State<LogEditorView> {
     _capturedImagePath = widget.existingLog?.imagePath;
   }
 
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descController.dispose();
+    super.dispose();
+  }
+
   /// Buka VisionView dalam mode picker, tunggu hasil path foto
   Future<void> _openCamera() async {
-    // 1. Ambil foto dari kamera
+    // 1. Ambil foto dari kamera (mode picker: returnImagePath = true)
     final String? rawImagePath = await Navigator.push<String>(
       context,
       MaterialPageRoute(
@@ -242,10 +249,10 @@ class _LogEditorViewState extends State<LogEditorView> {
       description: _descController.text,
       category: _selectedCategory,
       date: DateTime.now().toString(),
-      isSynced: true, // Pure offline, selalu synced
+      isSynced: true,
       authorId: widget.existingLog?.authorId ?? widget.currentUser.username,
       teamId: widget.currentUser.teamId,
-      imagePath: _capturedImagePath, // Simpan path foto
+      imagePath: _capturedImagePath,
     );
 
     widget.onSave(newLog);

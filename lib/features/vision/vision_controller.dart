@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:flutter/foundation.dart';
 
 /// VisionController manages the camera lifecycle and detection logic
 /// for the Smart Patrol System.
@@ -29,12 +31,63 @@ class VisionController extends ChangeNotifier with WidgetsBindingObserver {
 
   VisionController() {
     // Register observer to monitor app lifecycle status
+    final faceDetector = FaceDetector(
+      options: FaceDetectorOptions(
+        performanceMode: FaceDetectorMode.fast, // Faster for real-time
+      ),
+    );
+
+    List<Face> detectedFaces = [];
     WidgetsBinding.instance.addObserver(this);
     initCamera();
   }
 
   /// Initialize the rear camera with medium resolution
   /// ResolutionPreset.medium balances AI accuracy with performance
+
+  CameraLensDirection currentLensDirection = CameraLensDirection.back;
+
+  InputImage _convertCameraImageToInputImage(CameraImage image) {
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final Plane plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    final bytes = allBytes.done().buffer.asUint8List();
+
+    final Size imageSize = Size(
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+
+    // Note: Most modern cameras are sensor rotation 90 or 270.
+    // You might need to adjust this depending on the device.
+    final inputImageMetadata = InputImageMetadata(
+      size: imageSize,
+      rotation: InputImageRotation.rotation90deg,
+      format: InputImageFormat.nv21, // Camera package usually outputs this
+      bytesPerRow: image.planes[0].bytesPerRow,
+    );
+
+    return InputImage.fromBytes(bytes: bytes, metadata: inputImageMetadata);
+  }
+
+  Future<void> initializeCamera() async {
+    final cameras = await availableCameras();
+    // Toggle logic
+    final camera = cameras.firstWhere(
+      (c) => c.lensDirection == currentLensDirection,
+    );
+    controller = CameraController(camera, ResolutionPreset.medium);
+    await controller!.initialize();
+  }
+
+  void switchCamera() {
+    currentLensDirection = (currentLensDirection == CameraLensDirection.back)
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+    initializeCamera();
+  }
+
   Future<void> initCamera() async {
     try {
       final cameras = await availableCameras();
