@@ -34,6 +34,27 @@ class ImageProcessingController extends ChangeNotifier {
     });
   }
 
+  /// 4. CONVOLUTION (Sharpening / High-Pass Filter)
+  Future<void> applySharpen() async {
+    await _processImage((originalImage) {
+      // Applying a 3x3 kernel matrix to sharpen the edges of road damage
+      return img.convolution(
+        originalImage,
+        filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
+        div: 1,
+        offset: 0,
+      );
+    });
+  }
+
+  /// 5. CONTRAST ADJUSTMENT
+  Future<void> applyContrast() async {
+    await _processImage((originalImage) {
+      // Enhancing contrast to simulate basic histogram stretching
+      return img.adjustColor(originalImage, contrast: 1.5);
+    });
+  }
+
   /// Core Engine: Decodes, applies function, and saves a new file
   Future<void> _processImage(img.Image Function(img.Image) operation) async {
     if (currentImagePath == null) return;

@@ -109,6 +109,16 @@ class _ImageProcessingViewState extends State<ImageProcessingView> {
                           icon: const Icon(Icons.invert_colors),
                           label: const Text("Inverse (NOT)"),
                         ),
+                        ElevatedButton.icon(
+                          onPressed: () => _controller.applySharpen(),
+                          icon: const Icon(Icons.grid_on),
+                          label: const Text("Konvolusi (Sharpen)"),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () => _controller.applyContrast(),
+                          icon: const Icon(Icons.contrast),
+                          label: const Text("Kontras (+50%)"),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
