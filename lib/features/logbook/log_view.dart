@@ -8,7 +8,6 @@ import '../auth/user_model.dart';
 import 'log_editor_view.dart';
 import '../auth/login_view.dart';
 import '../vision/vision_view.dart';
-import 'package:camera/camera.dart'; // Make sure this is at the top
 
 class LogView extends StatefulWidget {
   final UserModel currentUser;
@@ -55,7 +54,7 @@ class _LogViewState extends State<LogView> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
-              await _controller.removeLog(log); // Gunakan objek, bukan index
+              await _controller.removeLog(log);
               if (context.mounted) Navigator.pop(context);
             },
             child: const Text("Hapus", style: TextStyle(color: Colors.white)),
@@ -193,9 +192,6 @@ class _LogViewState extends State<LogView> {
                   itemCount: currentLogs.length,
                   itemBuilder: (context, index) {
                     final log = currentLogs[index];
-
-                    // --- BUG FIX: Cari index di logsNotifier (bukan filteredLogs) ---
-                    // Ini penting saat user sedang search/filter
                     final actualIndex = _controller.logsNotifier.value.indexOf(
                       log,
                     );
@@ -225,7 +221,6 @@ class _LogViewState extends State<LogView> {
                           "Oleh: ${log.authorId} | $formattedDate",
                         ),
                         children: [
-                          // Tampilkan foto jika ada
                           if (log.imagePath != null &&
                               log.imagePath!.isNotEmpty)
                             Padding(
@@ -252,14 +247,10 @@ class _LogViewState extends State<LogView> {
                                 ),
                               ),
                             ),
-
-                          // Deskripsi markdown
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: MarkdownBody(data: log.description),
                           ),
-
-                          // Tombol edit/hapus
                           if (canModify)
                             ButtonBar(
                               children: [
@@ -268,19 +259,15 @@ class _LogViewState extends State<LogView> {
                                     Icons.edit,
                                     color: Colors.blue,
                                   ),
-                                  onPressed: () => _openEditor(
-                                    index:
-                                        actualIndex, // pakai index yang benar
-                                    log: log,
-                                  ),
+                                  onPressed: () =>
+                                      _openEditor(index: actualIndex, log: log),
                                 ),
                                 IconButton(
                                   icon: const Icon(
                                     Icons.delete,
                                     color: Colors.red,
                                   ),
-                                  onPressed: () =>
-                                      _confirmDelete(log), // pakai objek
+                                  onPressed: () => _confirmDelete(log),
                                 ),
                               ],
                             ),
@@ -298,23 +285,10 @@ class _LogViewState extends State<LogView> {
         mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Tombol buka kamera standalone (PCD Scanner)
+          // PCD Scanner — VisionView manages its own camera internally
           FloatingActionButton(
             heroTag: 'pcd_scanner_fab',
-            onPressed: () async {
-              // 1. Get the camera
-              final cameras = await availableCameras();
-              if (cameras.isEmpty) return;
-
-              // 2. Initialize the controller
-              final controller = CameraController(
-                cameras.first,
-                ResolutionPreset.medium,
-              );
-              await controller.initialize();
-
-              // 3. Navigate (Remove 'const' because the controller is dynamic)
-              if (!context.mounted) return;
+            onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const VisionView()),
@@ -326,7 +300,7 @@ class _LogViewState extends State<LogView> {
           ),
           const SizedBox(height: 16),
 
-          // Tombol tambah catatan baru
+          // Add new log
           FloatingActionButton(
             heroTag: 'add_log_fab',
             onPressed: () => _openEditor(),

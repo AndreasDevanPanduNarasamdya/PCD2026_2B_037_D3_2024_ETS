@@ -6,13 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:flutter/foundation.dart';
 
-/// VisionController manages the camera lifecycle and detection logic
-/// for the Smart Patrol System.
-///
-/// This controller follows SOLID principles:
-/// - Single Responsibility: Manages only camera and detection state
-/// - Open/Closed: Can be extended without modifying core logic
-/// - Dependency Inversion: Depends on abstractions (ChangeNotifier)
+/// VisionController manages the camera lifecycle and REAL face detection logic.
 class VisionController extends ChangeNotifier with WidgetsBindingObserver {
   // Camera controller instance
   CameraController? controller;
@@ -21,73 +15,64 @@ class VisionController extends ChangeNotifier with WidgetsBindingObserver {
   bool isInitialized = false;
   String? errorMessage;
 
-  // Detection results (for Phase 5)
+  // Real face detection
+  final FaceDetector _faceDetector = FaceDetector(
+    options: FaceDetectorOptions(
+      performanceMode: FaceDetectorMode.fast,
+      enableContours: false,
+      enableClassification: false,
+    ),
+  );
+  bool _isDetecting = false;
   List<DetectionResult> currentDetections = [];
-  Timer? _mockDetectionTimer;
+  Size? imageSize;
 
-  // UX Enhancement: Flashlight and Overlay toggles (Phase 6)
+  // UX toggles
   bool isFlashlightOn = false;
   bool isOverlayVisible = true;
+  bool isFaceDetectionEnabled = true;
+
+  // Active image filter
+  ActiveFilter currentFilter = ActiveFilter.none;
 
   VisionController() {
-    // Register observer to monitor app lifecycle status
-    final faceDetector = FaceDetector(
-      options: FaceDetectorOptions(
-        performanceMode: FaceDetectorMode.fast, // Faster for real-time
-      ),
-    );
-
-    List<Face> detectedFaces = [];
     WidgetsBinding.instance.addObserver(this);
     initCamera();
   }
 
-  /// Initialize the rear camera with medium resolution
-  /// ResolutionPreset.medium balances AI accuracy with performance
-
   CameraLensDirection currentLensDirection = CameraLensDirection.back;
 
-  InputImage _convertCameraImageToInputImage(CameraImage image) {
-    final WriteBuffer allBytes = WriteBuffer();
-    for (final Plane plane in image.planes) {
-      allBytes.putUint8List(plane.bytes);
+  /// Convert CameraImage to InputImage for ML Kit
+  InputImage? _convertCameraImage(CameraImage image) {
+    try {
+      final WriteBuffer allBytes = WriteBuffer();
+      for (final Plane plane in image.planes) {
+        allBytes.putUint8List(plane.bytes);
+      }
+      final bytes = allBytes.done().buffer.asUint8List();
+
+      imageSize = Size(image.width.toDouble(), image.height.toDouble());
+
+      // Determine rotation based on lens direction
+      final rotation = currentLensDirection == CameraLensDirection.front
+          ? InputImageRotation.rotation270deg
+          : InputImageRotation.rotation90deg;
+
+      final inputImageMetadata = InputImageMetadata(
+        size: imageSize!,
+        rotation: rotation,
+        format: InputImageFormat.nv21,
+        bytesPerRow: image.planes[0].bytesPerRow,
+      );
+
+      return InputImage.fromBytes(bytes: bytes, metadata: inputImageMetadata);
+    } catch (e) {
+      debugPrint('Error converting camera image: $e');
+      return null;
     }
-    final bytes = allBytes.done().buffer.asUint8List();
-
-    final Size imageSize = Size(
-      image.width.toDouble(),
-      image.height.toDouble(),
-    );
-
-    // Note: Most modern cameras are sensor rotation 90 or 270.
-    // You might need to adjust this depending on the device.
-    final inputImageMetadata = InputImageMetadata(
-      size: imageSize,
-      rotation: InputImageRotation.rotation90deg,
-      format: InputImageFormat.nv21, // Camera package usually outputs this
-      bytesPerRow: image.planes[0].bytesPerRow,
-    );
-
-    return InputImage.fromBytes(bytes: bytes, metadata: inputImageMetadata);
   }
 
-  Future<void> initializeCamera() async {
-    final cameras = await availableCameras();
-    // Toggle logic
-    final camera = cameras.firstWhere(
-      (c) => c.lensDirection == currentLensDirection,
-    );
-    controller = CameraController(camera, ResolutionPreset.medium);
-    await controller!.initialize();
-  }
-
-  void switchCamera() {
-    currentLensDirection = (currentLensDirection == CameraLensDirection.back)
-        ? CameraLensDirection.front
-        : CameraLensDirection.back;
-    initializeCamera();
-  }
-
+  /// Initialize camera and start image stream for face detection
   Future<void> initCamera() async {
     try {
       final cameras = await availableCameras();
@@ -98,44 +83,130 @@ class VisionController extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
 
-      // Select Rear Camera (Index 0)
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == currentLensDirection,
+        orElse: () => cameras[0],
+      );
+
       controller = CameraController(
-        cameras[0],
-        ResolutionPreset.high, // Use high resolution for better photo quality
-        enableAudio: false, // We only need visual for road damage detection
-        imageFormatGroup:
-            ImageFormatGroup.jpeg, // Use JPEG format for better compatibility
+        camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420,
       );
 
       await controller!.initialize();
       isInitialized = true;
       errorMessage = null;
+      notifyListeners();
+
+      // Start real-time face detection stream
+      if (isFaceDetectionEnabled) {
+        _startImageStream();
+      }
     } catch (e) {
       errorMessage = "Failed to initialize camera: $e";
+      notifyListeners();
     }
+  }
 
+  /// Start image stream and run face detection on each frame
+  void _startImageStream() {
+    if (controller == null || !controller!.value.isInitialized) return;
+
+    controller!.startImageStream((CameraImage image) async {
+      if (_isDetecting) return;
+      _isDetecting = true;
+
+      try {
+        final inputImage = _convertCameraImage(image);
+        if (inputImage == null) {
+          _isDetecting = false;
+          return;
+        }
+
+        final faces = await _faceDetector.processImage(inputImage);
+
+        currentDetections = faces.map((face) {
+          // Normalize bounding box to 0.0-1.0 range
+          final iw = imageSize!.width;
+          final ih = imageSize!.height;
+          return DetectionResult(
+            box: Rect.fromLTRB(
+              face.boundingBox.left / iw,
+              face.boundingBox.top / ih,
+              face.boundingBox.right / iw,
+              face.boundingBox.bottom / ih,
+            ),
+            label: 'Face',
+            score: face.headEulerAngleY != null ? 0.99 : 0.90,
+          );
+        }).toList();
+
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Face detection error: $e');
+      } finally {
+        _isDetecting = false;
+      }
+    });
+  }
+
+  /// Stop image stream
+  void _stopImageStream() {
+    if (controller != null && controller!.value.isStreamingImages) {
+      controller!.stopImageStream();
+    }
+  }
+
+  /// Switch between front and back camera
+  Future<void> switchCamera() async {
+    _stopImageStream();
+    await controller?.dispose();
+    isInitialized = false;
+    currentDetections = [];
+    notifyListeners();
+
+    currentLensDirection = (currentLensDirection == CameraLensDirection.back)
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
+
+    await initCamera();
+  }
+
+  /// Toggle face detection on/off
+  void toggleFaceDetection() {
+    isFaceDetectionEnabled = !isFaceDetectionEnabled;
+
+    if (isFaceDetectionEnabled) {
+      _startImageStream();
+    } else {
+      _stopImageStream();
+      currentDetections = [];
+    }
     notifyListeners();
   }
 
-  /// Capture photo from camera stream
-  /// This ensures full frame capture with proper resolution
+  /// Set active filter for camera preview
+  void setFilter(ActiveFilter filter) {
+    // If same filter tapped again, turn it off
+    currentFilter = (currentFilter == filter) ? ActiveFilter.none : filter;
+    notifyListeners();
+  }
+
+  /// Capture photo from camera
   Future<XFile?> takePhoto() async {
-    if (controller == null || !controller!.value.isInitialized) {
-      return null;
-    }
+    if (controller == null || !controller!.value.isInitialized) return null;
 
     try {
-      // Pause camera stream briefly to ensure clean capture
-      await controller!.pausePreview();
-
-      // Small delay to ensure camera is ready
+      _stopImageStream();
       await Future.delayed(const Duration(milliseconds: 100));
-
-      // Capture the picture
       final image = await controller!.takePicture();
 
-      // Resume camera stream
-      await controller!.resumePreview();
+      // Restart stream after capture
+      if (isFaceDetectionEnabled) {
+        _startImageStream();
+      }
 
       return image;
     } catch (e) {
@@ -145,136 +216,62 @@ class VisionController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Handle app lifecycle state changes
-  ///
-  /// This is CRITICAL for preventing memory leaks and battery drain
-  /// - AppLifecycleState.inactive: Release camera when app goes to background
-  /// - AppLifecycleState.resumed: Re-initialize camera when app returns to foreground
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final CameraController? cameraController = controller;
-
-    // If controller doesn't exist or isn't ready, ignore
     if (cameraController == null || !cameraController.value.isInitialized) {
       return;
     }
 
     if (state == AppLifecycleState.inactive) {
-      // Release camera resource when app is not visible
+      _stopImageStream();
       cameraController.dispose();
       isInitialized = false;
       notifyListeners();
     } else if (state == AppLifecycleState.resumed) {
-      // Re-initialize when user returns to app
       initCamera();
     }
   }
 
-  /// Toggle flashlight (torch) on/off
-  /// UX Enhancement from Phase 6
+  /// Toggle flashlight
   Future<void> toggleFlashlight() async {
     if (controller == null || !controller!.value.isInitialized) return;
 
     isFlashlightOn = !isFlashlightOn;
-
     try {
       await controller!.setFlashMode(
-        isFlashlightOn ? FlashMode.always : FlashMode.off,
+        isFlashlightOn ? FlashMode.torch : FlashMode.off,
       );
     } catch (e) {
       errorMessage = "Failed to toggle flashlight: $e";
-      notifyListeners();
     }
-
     notifyListeners();
   }
 
   /// Toggle overlay visibility
-  /// UX Enhancement from Phase 6
   void toggleOverlay() {
     isOverlayVisible = !isOverlayVisible;
     notifyListeners();
   }
 
-  /// Start mock detection simulation
-  /// Phase 5: Simulates AI detection by moving bounding box every 3 seconds
-  void startMockDetection() {
-    _mockDetectionTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (timer) => _generateMockDetection(),
-    );
-  }
-
-  /// Generate a mock detection result at random position
-  /// This simulates YOLO output before actual AI integration in Module 7
-  void _generateMockDetection() {
-    final random = Random();
-
-    // Generate random normalized coordinates (0.0 - 1.0)
-    // Keep within 10%-90% range to avoid edge clipping
-    final x = random.nextDouble() * 0.8 + 0.1;
-    final y = random.nextDouble() * 0.8 + 0.1;
-    final width = 0.2 + random.nextDouble() * 0.2; // 20%-40% of screen width
-    final height = 0.1 + random.nextDouble() * 0.1; // 10%-20% of screen height
-
-    // Create detection result
-    currentDetections = [
-      DetectionResult(
-        box: Rect.fromLTWH(x, y, width, height),
-        label: _getRandomDamageType(),
-        score: 0.85 + random.nextDouble() * 0.14, // 85%-99% confidence
-      ),
-    ];
-
-    notifyListeners();
-  }
-
-  /// Get a random damage type from RDD-2022 dataset
-  String _getRandomDamageType() {
-    final types = ['D00', 'D10', 'D20', 'D40'];
-    final labels = {
-      'D00': 'Longitudinal Crack',
-      'D10': 'Transverse Crack',
-      'D20': 'Alligator Crack',
-      'D40': 'Pothole',
-    };
-    final type = types[Random().nextInt(types.length)];
-    return ' [$type] ${labels[type]!}';
-  }
-
-  /// Clean up resources
-  ///
-  /// This is MANDATORY to prevent memory leaks
-  /// - Remove observer to stop listening to lifecycle events
-  /// - Dispose camera controller to release hardware
-  /// - Cancel mock detection timer
   @override
   void dispose() {
-    // Remove observer to prevent memory leak
     WidgetsBinding.instance.removeObserver(this);
-
-    // Cancel mock detection timer
-    _mockDetectionTimer?.cancel();
-
-    // Release camera hardware
+    _stopImageStream();
+    _faceDetector.close();
     controller?.dispose();
-
     super.dispose();
   }
 }
 
-/// Data Transfer Object (DTO) for detection results
-///
-/// This follows the Single Responsibility Principle:
-/// - VisionController generates these objects
-/// - DamagePainter only draws them
-///
-/// If you replace YOLO with another model, only change data population
-/// in VisionController without touching UI or Painter code.
+/// Active filter enum
+enum ActiveFilter { none, grayscale, blur, sharpen, contrast, inverse }
+
+/// DTO for detection results
 class DetectionResult {
-  final Rect box; // Box coordinates (normalized 0.0-1.0)
-  final String label; // Damage type (D40, D20, etc)
-  final double score; // AI confidence percentage (0.0-1.0)
+  final Rect box;
+  final String label;
+  final double score;
 
   DetectionResult({
     required this.box,
