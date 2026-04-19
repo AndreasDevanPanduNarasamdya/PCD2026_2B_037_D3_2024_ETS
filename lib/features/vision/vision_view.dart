@@ -35,7 +35,6 @@ class _VisionViewState extends State<VisionView> {
     final image = await _visionController.takePhoto();
     if (image == null) return;
 
-    // Apply active filter to the saved file
     final savedPath = await _applyFilterToFile(
       image.path,
       _visionController.currentFilter,
@@ -56,7 +55,6 @@ class _VisionViewState extends State<VisionView> {
     }
   }
 
-  /// Bake the active filter into the captured image file
   Future<String> _applyFilterToFile(String path, ActiveFilter filter) async {
     if (filter == ActiveFilter.none) return path;
     try {
@@ -103,16 +101,17 @@ class _VisionViewState extends State<VisionView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: Colors.black.withOpacity(0.5),
         foregroundColor: Colors.white,
+        elevation: 0,
         title: Text(
           widget.returnImagePath
               ? "Ambil Foto untuk Catatan"
               : "Smart-Patrol Vision",
         ),
         actions: [
-          // Switch camera
           ListenableBuilder(
             listenable: _visionController,
             builder: (context, _) => IconButton(
@@ -121,7 +120,6 @@ class _VisionViewState extends State<VisionView> {
               tooltip: 'Ganti Kamera',
             ),
           ),
-          // Flashlight
           ListenableBuilder(
             listenable: _visionController,
             builder: (context, _) => IconButton(
@@ -134,7 +132,6 @@ class _VisionViewState extends State<VisionView> {
               tooltip: 'Toggle Flash',
             ),
           ),
-          // Overlay
           ListenableBuilder(
             listenable: _visionController,
             builder: (context, _) => IconButton(
@@ -155,11 +152,97 @@ class _VisionViewState extends State<VisionView> {
           if (!_visionController.isInitialized) {
             return _buildLoadingState();
           }
-          return Column(
+          return Stack(
             children: [
-              Expanded(child: _buildCameraPreview()),
-              _buildFilterBar(),
-              _buildBottomControls(),
+              // Camera fills ENTIRE screen
+              _buildFullScreenCamera(),
+
+              // Bottom sheet overlay: filter bar + controls
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Active filter label
+                    if (_visionController.currentFilter != ActiveFilter.none)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'Filter: ${_filterLabel(_visionController.currentFilter)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+
+                    // Picker hint
+                    if (widget.returnImagePath)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          "Tekan ✓ untuk menggunakan foto ini",
+                          style: TextStyle(color: Colors.white, fontSize: 13),
+                        ),
+                      ),
+
+                    // Filter chips
+                    _buildFilterBar(),
+
+                    // Capture + controls
+                    _buildBottomControls(),
+                  ],
+                ),
+              ),
+
+              // Detection overlay (on top of camera, below UI)
+              if (_visionController.isOverlayVisible &&
+                  _visionController.currentDetections.isNotEmpty)
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: DamagePainter(_visionController.currentDetections),
+                  ),
+                ),
+
+              // Last captured thumbnail (standalone mode)
+              if (!widget.returnImagePath && _lastCapturedPath != null)
+                Positioned(
+                  bottom: 160,
+                  right: 16,
+                  child: GestureDetector(
+                    onTap: () => _showImagePreview(_lastCapturedPath!),
+                    child: Container(
+                      width: 60,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 2),
+                        borderRadius: BorderRadius.circular(8),
+                        image: DecorationImage(
+                          image: FileImage(File(_lastCapturedPath!)),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           );
         },
@@ -167,115 +250,25 @@ class _VisionViewState extends State<VisionView> {
     );
   }
 
-  /// Camera preview that fills width without squashing aspect ratio
-  Widget _buildCameraPreview() {
+  /// Camera that fills the FULL screen — no black bars, no squash
+  Widget _buildFullScreenCamera() {
     final cam = _visionController.controller!;
-    final screenWidth = MediaQuery.of(context).size.width;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Layer 1: Camera — correct aspect ratio, fills width
-        ClipRect(
-          child: OverflowBox(
-            alignment: Alignment.center,
-            child: FittedBox(
-              fit: BoxFit.fitWidth,
-              child: SizedBox(
-                width: screenWidth,
-                height: screenWidth / cam.value.aspectRatio,
-                child: CameraPreview(cam),
-              ),
-            ),
-          ),
+    return SizedBox.expand(
+      child: FittedBox(
+        // cover = fills all space, crops edges if needed (like background-size: cover)
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: cam.value.previewSize!.height, // swap because portrait
+          height: cam.value.previewSize!.width,
+          child: CameraPreview(cam),
         ),
-
-        // Layer 2: Detection overlay boxes
-        if (_visionController.isOverlayVisible &&
-            _visionController.currentDetections.isNotEmpty)
-          Positioned.fill(
-            child: CustomPaint(
-              painter: DamagePainter(_visionController.currentDetections),
-            ),
-          ),
-
-        // Layer 3: Active filter label
-        if (_visionController.currentFilter != ActiveFilter.none)
-          Positioned(
-            top: 12,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  'Filter: ${_filterLabel(_visionController.currentFilter)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ),
-            ),
-          ),
-
-        // Layer 4: Picker hint banner
-        if (widget.returnImagePath)
-          Positioned(
-            bottom: 12,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  "Tekan ✓ untuk menggunakan foto ini",
-                  style: TextStyle(color: Colors.white, fontSize: 13),
-                ),
-              ),
-            ),
-          ),
-
-        // Layer 5: Last captured thumbnail (standalone mode)
-        if (!widget.returnImagePath && _lastCapturedPath != null)
-          Positioned(
-            bottom: 12,
-            right: 12,
-            child: GestureDetector(
-              onTap: () => _showImagePreview(_lastCapturedPath!),
-              child: Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                  image: DecorationImage(
-                    image: FileImage(File(_lastCapturedPath!)),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
+      ),
     );
   }
 
-  /// Scrollable filter chip bar
   Widget _buildFilterBar() {
     return Container(
-      color: Colors.black,
+      color: Colors.black.withOpacity(0.7),
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
       child: ListenableBuilder(
         listenable: _visionController,
@@ -333,11 +326,10 @@ class _VisionViewState extends State<VisionView> {
     );
   }
 
-  /// Bottom bar: face detection toggle | capture button | detection count
   Widget _buildBottomControls() {
     return Container(
-      color: Colors.black,
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      color: Colors.black.withOpacity(0.7),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
       child: ListenableBuilder(
         listenable: _visionController,
         builder: (context, _) => Row(
@@ -356,7 +348,6 @@ class _VisionViewState extends State<VisionView> {
                         : Colors.grey,
                     size: 28,
                   ),
-                  tooltip: 'Toggle Face Detection',
                 ),
                 Text(
                   _visionController.isFaceDetectionEnabled
