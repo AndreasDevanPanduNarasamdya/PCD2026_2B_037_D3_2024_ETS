@@ -1,5 +1,4 @@
 import 'package:hive/hive.dart';
-import 'package:mongo_dart/mongo_dart.dart';
 
 part 'log_model.g.dart';
 
@@ -21,6 +20,8 @@ class LogModel extends HiveObject {
   final String authorId;
   @HiveField(7)
   final String teamId;
+  @HiveField(8)
+  final String? imagePath; // Path foto dari kamera (opsional)
 
   LogModel({
     this.id,
@@ -31,40 +32,6 @@ class LogModel extends HiveObject {
     this.isSynced = true,
     required this.authorId,
     required this.teamId,
+    this.imagePath,
   });
-
-  factory LogModel.fromMap(Map<String, dynamic> map) {
-    var rawId = map['_id'];
-    String? parsedId;
-
-    if (rawId is ObjectId) {
-      parsedId = rawId.toHexString();
-    } else if (rawId is String) {
-      parsedId = rawId;
-    }
-
-    return LogModel(
-      id: parsedId,
-      title: map['title'] ?? '',
-      date: map['date'] ?? '',
-      description: map['description'] ?? '',
-      category: map['category'] ?? 'Pribadi',
-      isSynced: true,
-      authorId: map['authorId'] ?? 'Unknown',
-      teamId: map['teamId'] ?? 'NoTeam',
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      '_id': id != null ? ObjectId.fromHexString(id!) : ObjectId(),
-      'title': title,
-      'date': date,
-      'description': description,
-      'category': category,
-      'isSynced': isSynced,
-      'authorId': authorId,
-      'teamId': teamId,
-    };
-  }
 }

@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:hive_flutter/hive_flutter.dart'; // BARU
+import 'package:hive_flutter/hive_flutter.dart';
 import './features/onboarding/onboarding_view.dart';
-import './features/logbook/models/log_model.dart'; // BARU
+import './features/logbook/models/log_model.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
 
-  // --- INISIALISASI HIVE ---
+  // --- INISIALISASI HIVE (offline storage) ---
   await Hive.initFlutter();
   Hive.registerAdapter(LogModelAdapter());
   await Hive.openBox<LogModel>('logbookBox');

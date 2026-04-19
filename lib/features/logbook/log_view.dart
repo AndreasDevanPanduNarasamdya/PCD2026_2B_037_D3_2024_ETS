@@ -1,14 +1,16 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart'; // FR-06: Markdown Support
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:intl/intl.dart';
 import 'log_controller.dart';
 import './models/log_model.dart';
 import '../auth/user_model.dart';
 import 'log_editor_view.dart';
 import '../auth/login_view.dart';
+import '../vision/vision_view.dart';
 
 class LogView extends StatefulWidget {
-  final UserModel currentUser; // FR-04: Menerima Data User Lengkap
+  final UserModel currentUser;
   const LogView({super.key, required this.currentUser});
 
   @override
@@ -22,9 +24,8 @@ class _LogViewState extends State<LogView> {
   @override
   void initState() {
     super.initState();
-    // Panggil data cloud sesaat setelah tampilan dirender, berdasarkan Team ID
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _controller.fetchLogs(widget.currentUser.teamId);
+      _controller.loadFromDisk();
     });
   }
 
@@ -39,7 +40,7 @@ class _LogViewState extends State<LogView> {
     }
   }
 
-  void _confirmDelete(int index) {
+  void _confirmDelete(LogModel log) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -53,7 +54,7 @@ class _LogViewState extends State<LogView> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
-              await _controller.removeLog(index);
+              await _controller.removeLog(log); // Gunakan objek, bukan index
               if (context.mounted) Navigator.pop(context);
             },
             child: const Text("Hapus", style: TextStyle(color: Colors.white)),
@@ -63,7 +64,6 @@ class _LogViewState extends State<LogView> {
     );
   }
 
-  // --- FR-02: Navigasi ke Halaman Editor ---
   void _openEditor({int? index, LogModel? log}) {
     Navigator.push(
       context,
@@ -73,9 +73,9 @@ class _LogViewState extends State<LogView> {
           existingLog: log,
           onSave: (newLog) {
             if (index == null) {
-              _controller.addLog(newLog); // Tambah Baru
+              _controller.addLog(newLog);
             } else {
-              _controller.updateLog(index, newLog); // Edit
+              _controller.updateLog(index, newLog);
             }
           },
         ),
@@ -92,7 +92,7 @@ class _LogViewState extends State<LogView> {
           children: [
             const Text("Collab LogBook", style: TextStyle(fontSize: 18)),
             Text(
-              "User: ${widget.currentUser.username} | Role: ${widget.currentUser.role} | Tim: ${widget.currentUser.teamId}",
+              "User: ${widget.currentUser.username} | Role: ${widget.currentUser.role}",
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.normal,
@@ -105,18 +105,14 @@ class _LogViewState extends State<LogView> {
             icon: const Icon(Icons.logout),
             tooltip: "Keluar",
             onPressed: () {
-              // Tampilkan Pop-up Konfirmasi Logout
               showDialog(
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text("Konfirmasi Logout"),
-                  content: const Text(
-                    "Apakah Anda yakin ingin keluar dari akun ini?",
-                  ),
+                  content: const Text("Apakah Anda yakin ingin keluar?"),
                   actions: [
                     TextButton(
-                      onPressed: () =>
-                          Navigator.pop(context), // Batal, tutup dialog
+                      onPressed: () => Navigator.pop(context),
                       child: const Text("Batal"),
                     ),
                     ElevatedButton(
@@ -124,16 +120,13 @@ class _LogViewState extends State<LogView> {
                         backgroundColor: Colors.red,
                       ),
                       onPressed: () {
-                        Navigator.pop(context); // Tutup dialog dulu
-
-                        // Hapus semua riwayat navigasi dan kembali ke halaman Login
+                        Navigator.pop(context);
                         Navigator.pushAndRemoveUntil(
                           context,
                           MaterialPageRoute(
                             builder: (context) => const LoginView(),
                           ),
-                          (route) =>
-                              false, // Ini yang membuat user tidak bisa menekan tombol "Back" ke logbook
+                          (route) => false,
                         );
                       },
                       child: const Text(
@@ -150,30 +143,15 @@ class _LogViewState extends State<LogView> {
       ),
       body: Column(
         children: [
-          ValueListenableBuilder<bool>(
-            valueListenable: _controller.isOffline,
-            builder: (context, isOffline, child) {
-              if (!isOffline) return const SizedBox.shrink();
-              return Container(
-                width: double.infinity,
-                color: Colors.red,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: const Text(
-                  "Mode offline, Mencari jaringan internet",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              );
-            },
-          ),
           Padding(
             padding: const EdgeInsets.all(8),
             child: TextField(
               controller: contentSearch,
-              decoration: const InputDecoration(hintText: "Search for Notes"),
+              decoration: const InputDecoration(
+                hintText: "Cari catatan...",
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
               onChanged: (value) => _controller.searchLog(value),
             ),
           ),
@@ -210,79 +188,138 @@ class _LogViewState extends State<LogView> {
                   );
                 }
 
-                return RefreshIndicator(
-                  onRefresh: () async =>
-                      await _controller.fetchLogs(widget.currentUser.teamId),
-                  child: ListView.builder(
-                    itemCount: currentLogs.length,
-                    itemBuilder: (context, index) {
-                      final log = currentLogs[index];
-                      DateTime parsedDate = DateTime.parse(log.date);
-                      String formattedDate = DateFormat(
-                        'dd MMM yyyy, HH:mm',
-                      ).format(parsedDate);
+                return ListView.builder(
+                  itemCount: currentLogs.length,
+                  itemBuilder: (context, index) {
+                    final log = currentLogs[index];
 
-                      // --- FR-04: GATEKEEPER POLICY ---
-                      // Apakah user ini boleh mengedit/menghapus catatan ini?
-                      bool canModify =
-                          (widget.currentUser.role == 'Ketua') ||
-                          (log.authorId == widget.currentUser.username);
+                    // --- BUG FIX: Cari index di logsNotifier (bukan filteredLogs) ---
+                    // Ini penting saat user sedang search/filter
+                    final actualIndex = _controller.logsNotifier.value.indexOf(
+                      log,
+                    );
 
-                      return Card(
-                        color: _getCategoryColor(log.category),
-                        child: ExpansionTile(
-                          // Menggunakan ExpansionTile agar Markdown panjang bisa ditutup/buka
-                          leading: Icon(
-                            log.isSynced ? Icons.cloud_done : Icons.cloud_off,
-                            color: log.isSynced ? Colors.green : Colors.grey,
-                          ),
-                          title: Text(
-                            log.title,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text(
-                            "Oleh: ${log.authorId} | $formattedDate",
-                          ),
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              // --- FR-06: TAMPILKAN SEBAGAI MARKDOWN ---
-                              child: MarkdownBody(data: log.description),
-                            ),
-                            if (canModify) // Tombol hanya muncul jika Gatekeeper mengizinkan
-                              ButtonBar(
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.edit,
-                                      color: Colors.blue,
-                                    ),
-                                    onPressed: () =>
-                                        _openEditor(index: index, log: log),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.delete,
-                                      color: Colors.red,
-                                    ),
-                                    onPressed: () => _confirmDelete(index),
-                                  ),
-                                ],
-                              ),
-                          ],
+                    DateTime parsedDate = DateTime.parse(log.date);
+                    String formattedDate = DateFormat(
+                      'dd MMM yyyy, HH:mm',
+                    ).format(parsedDate);
+
+                    bool canModify =
+                        (widget.currentUser.role == 'Ketua') ||
+                        (log.authorId == widget.currentUser.username);
+
+                    return Card(
+                      color: _getCategoryColor(log.category),
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: ExpansionTile(
+                        leading: const Icon(Icons.save, color: Colors.green),
+                        title: Text(
+                          log.title,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                      );
-                    },
-                  ),
+                        subtitle: Text(
+                          "Oleh: ${log.authorId} | $formattedDate",
+                        ),
+                        children: [
+                          // Tampilkan foto jika ada
+                          if (log.imagePath != null &&
+                              log.imagePath!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(log.imagePath!),
+                                  width: double.infinity,
+                                  height: 200,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const SizedBox(
+                                    height: 60,
+                                    child: Center(
+                                      child: Text(
+                                        "Foto tidak dapat ditampilkan",
+                                        style: TextStyle(color: Colors.grey),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                          // Deskripsi markdown
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: MarkdownBody(data: log.description),
+                          ),
+
+                          // Tombol edit/hapus
+                          if (canModify)
+                            ButtonBar(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color: Colors.blue,
+                                  ),
+                                  onPressed: () => _openEditor(
+                                    index:
+                                        actualIndex, // pakai index yang benar
+                                    log: log,
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () =>
+                                      _confirmDelete(log), // pakai objek
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 );
               },
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _openEditor(), // Buka editor kosong
-        child: const Icon(Icons.add),
+      floatingActionButton: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Tombol buka kamera standalone (PCD Scanner)
+          FloatingActionButton(
+            heroTag: 'pcd_scanner_fab',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const VisionView()),
+              );
+            },
+            backgroundColor: Colors.blueAccent,
+            tooltip: "Buka Kamera PCD",
+            child: const Icon(Icons.camera_alt, color: Colors.white),
+          ),
+          const SizedBox(height: 16),
+
+          // Tombol tambah catatan baru
+          FloatingActionButton(
+            heroTag: 'add_log_fab',
+            onPressed: () => _openEditor(),
+            tooltip: "Tambah Catatan",
+            child: const Icon(Icons.add),
+          ),
+        ],
       ),
     );
   }

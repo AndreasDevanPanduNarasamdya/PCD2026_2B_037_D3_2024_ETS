@@ -1,12 +1,13 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:mongo_dart/mongo_dart.dart' show ObjectId;
 import 'models/log_model.dart';
 import '../auth/user_model.dart';
+import '../vision/vision_view.dart';
+import '..//vision/image_processing_view.dart';
 
 class LogEditorView extends StatefulWidget {
   final UserModel currentUser;
-  final LogModel?
-  existingLog; // Jika null berarti Tambah Baru, jika ada isinya berarti Edit
+  final LogModel? existingLog;
   final Function(LogModel) onSave;
 
   const LogEditorView({
@@ -25,10 +26,12 @@ class _LogEditorViewState extends State<LogEditorView> {
   late TextEditingController _descController;
   late String _selectedCategory;
 
+  // Path foto yang diambil dari kamera
+  String? _capturedImagePath;
+
   @override
   void initState() {
     super.initState();
-    // Isi field jika sedang mode Edit
     _titleController = TextEditingController(
       text: widget.existingLog?.title ?? '',
     );
@@ -36,6 +39,43 @@ class _LogEditorViewState extends State<LogEditorView> {
       text: widget.existingLog?.description ?? '',
     );
     _selectedCategory = widget.existingLog?.category ?? 'Pribadi';
+    _capturedImagePath = widget.existingLog?.imagePath;
+  }
+
+  /// Buka VisionView dalam mode picker, tunggu hasil path foto
+  Future<void> _openCamera() async {
+    // 1. Ambil foto dari kamera
+    final String? rawImagePath = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const VisionView(returnImagePath: true),
+      ),
+    );
+
+    // 2. Jika foto berhasil diambil, arahkan ke halaman Manipulasi PCD
+    if (rawImagePath != null && context.mounted) {
+      final String? processedImagePath = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (context) =>
+              ImageProcessingView(initialImagePath: rawImagePath),
+        ),
+      );
+
+      // 3. Simpan hasil gambar yang sudah diproses ke form
+      if (processedImagePath != null) {
+        setState(() {
+          _capturedImagePath = processedImagePath;
+        });
+      }
+    }
+  }
+
+  /// Hapus foto yang sudah diambil
+  void _removePhoto() {
+    setState(() {
+      _capturedImagePath = null;
+    });
   }
 
   @override
@@ -50,6 +90,7 @@ class _LogEditorViewState extends State<LogEditorView> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            // --- Judul ---
             TextField(
               controller: _titleController,
               decoration: const InputDecoration(
@@ -58,10 +99,12 @@ class _LogEditorViewState extends State<LogEditorView> {
               ),
             ),
             const SizedBox(height: 16),
+
+            // --- Isi / Deskripsi ---
             Expanded(
               child: TextField(
                 controller: _descController,
-                maxLines: null, // Memungkinkan teks panjang untuk Markdown
+                maxLines: null,
                 expands: true,
                 textAlignVertical: TextAlignVertical.top,
                 decoration: const InputDecoration(
@@ -72,6 +115,12 @@ class _LogEditorViewState extends State<LogEditorView> {
               ),
             ),
             const SizedBox(height: 16),
+
+            // --- Section Foto Kamera ---
+            _buildCameraSection(),
+            const SizedBox(height: 16),
+
+            // --- Dropdown Kategori ---
             DropdownButtonFormField<String>(
               value: _selectedCategory,
               decoration: const InputDecoration(
@@ -84,26 +133,13 @@ class _LogEditorViewState extends State<LogEditorView> {
               onChanged: (val) => setState(() => _selectedCategory = val!),
             ),
             const SizedBox(height: 16),
+
+            // --- Tombol Simpan ---
             SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: () {
-                  final newLog = LogModel(
-                    id: widget.existingLog?.id ?? ObjectId().toHexString(),
-                    title: _titleController.text,
-                    description: _descController.text,
-                    category: _selectedCategory,
-                    date: DateTime.now().toString(),
-                    isSynced: false,
-                    authorId:
-                        widget.existingLog?.authorId ??
-                        widget.currentUser.username, // Pertahankan pemilik lama
-                    teamId: widget.currentUser.teamId,
-                  );
-                  widget.onSave(newLog);
-                  Navigator.pop(context);
-                },
+                onPressed: _saveLog,
                 child: const Text(
                   "Simpan Catatan",
                   style: TextStyle(fontSize: 16),
@@ -114,5 +150,105 @@ class _LogEditorViewState extends State<LogEditorView> {
         ),
       ),
     );
+  }
+
+  /// Widget section kamera: tombol ambil foto + preview hasil
+  Widget _buildCameraSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "Foto Pendukung",
+          style: TextStyle(fontSize: 14, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+
+        if (_capturedImagePath == null)
+          // Belum ada foto: tampilkan tombol kamera
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openCamera,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text("Ambil Foto dari Kamera"),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          )
+        else
+          // Sudah ada foto: tampilkan preview + tombol ganti/hapus
+          Column(
+            children: [
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(_capturedImagePath!),
+                      width: double.infinity,
+                      height: 180,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  // Tombol hapus di pojok kanan atas
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: GestureDetector(
+                      onTap: _removePhoto,
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.black54,
+                          shape: BoxShape.circle,
+                        ),
+                        padding: const EdgeInsets.all(4),
+                        child: const Icon(
+                          Icons.close,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Tombol ganti foto
+              TextButton.icon(
+                onPressed: _openCamera,
+                icon: const Icon(Icons.refresh),
+                label: const Text("Ganti Foto"),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  void _saveLog() {
+    if (_titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Judul tidak boleh kosong!")),
+      );
+      return;
+    }
+
+    final newLog = LogModel(
+      id:
+          widget.existingLog?.id ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      title: _titleController.text.trim(),
+      description: _descController.text,
+      category: _selectedCategory,
+      date: DateTime.now().toString(),
+      isSynced: true, // Pure offline, selalu synced
+      authorId: widget.existingLog?.authorId ?? widget.currentUser.username,
+      teamId: widget.currentUser.teamId,
+      imagePath: _capturedImagePath, // Simpan path foto
+    );
+
+    widget.onSave(newLog);
+    Navigator.pop(context);
   }
 }
